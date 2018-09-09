@@ -30,7 +30,7 @@
 
 /* The current RDB version. When the format changes in a way that is no longer
  * backward compatible this number gets incremented. */
-#define REDIS_RDB_VERSION 7
+#define REDIS_RDB_VERSION 8
 
 /* Defines related to the dump file format. To store 32 bits lengths for short
  * keys requires a lot of space, so we check the most significant 2 bits of
@@ -66,6 +66,7 @@
 #define REDIS_RDB_TYPE_SET    2
 #define REDIS_RDB_TYPE_ZSET   3
 #define REDIS_RDB_TYPE_HASH   4
+#define REDIS_RDB_TYPE_ZSET2  5
 
 /* Object types for encoded objects. */
 #define REDIS_RDB_TYPE_HASH_ZIPMAP    9
@@ -5525,6 +5526,7 @@ next:
         msg->type = MSG_REQ_REDIS_SADD;
         break;
     case REDIS_ZSET:
+    case REDIS_ZSET2:
         ret = redis_msg_append_bulk_full(msg, REDIS_INSERT_ZSET, 
             rmt_strlen(REDIS_INSERT_ZSET));
         msg->type = MSG_REQ_REDIS_ZADD;
@@ -5832,6 +5834,13 @@ static sds redis_rdb_file_load_double_str(redis_rdb *rdb) {
     }
 }
 
+static sds redis_rdb_file_load_binary_double_str(redis_rdb *rdb) {
+    char buf[256];
+
+    if (redis_rdb_file_read(rdb,buf,8) != RMT_OK) return NULL;
+    return sdsnewlen(buf, 8);
+}
+
 static sds redis_rdb_file_load_lzf_str(redis_rdb *rdb) {
     unsigned int len, clen;
     unsigned char *c = NULL;
@@ -5951,6 +5960,29 @@ static struct array *redis_rdb_file_load_value(redis_rdb *rdb, int rdbtype)
         while(len--) {
             if ((elem1 = redis_rdb_file_load_str(rdb)) == NULL) goto error;
             if ((elem2 = redis_rdb_file_load_double_str(rdb)) == NULL) {
+                sdsfree(elem1);
+                goto error;
+            }
+
+            str = array_push(value);
+            *str = elem2;
+            ASSERT(sdsIsNum(*str) == 1);
+            str = array_push(value);
+            *str = elem1;
+        }
+    }else if (rdbtype == REDIS_RDB_TYPE_ZSET2) {
+        if ((len = redis_rdb_file_load_len(rdb,NULL)) == REDIS_RDB_LENERR) goto error;
+
+        value = redis_value_create((uint32_t)(2*len));
+        if (value == NULL) {
+            log_error("ERROR: Out of memory");
+            goto error;
+        }
+        
+        while(len--) {
+            if ((elem1 = redis_rdb_file_load_str(rdb)) == NULL) goto error;
+            if ((elem2 = redis_rdb_file_load_binary_double_str(rdb)) == NULL) {
+                log_error("WARNING: Load Key[%s] ZSET2 Error", elem1);
                 sdsfree(elem1);
                 goto error;
             }
@@ -6211,6 +6243,9 @@ static int redis_object_type_get_by_rdbtype(int dbtype)
     case REDIS_RDB_TYPE_ZSET_ZIPLIST:
         
         return REDIS_ZSET;
+        break;
+    case REDIS_RDB_TYPE_ZSET2: 
+        return REDIS_ZSET2;
         break;
     case REDIS_RDB_TYPE_HASH:
     case REDIS_RDB_TYPE_HASH_ZIPMAP:

@@ -7,6 +7,7 @@
 #define REDIS_SET       2
 #define REDIS_ZSET      3
 #define REDIS_HASH      4
+#define REDIS_ZSET2     5
 
 #define REDIS_REPLY_STATUS_OK     "+OK\r\n"
 #define REDIS_REPLY_STATUS_PONG   "+PONG\r\n"
